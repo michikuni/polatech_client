@@ -43,19 +43,74 @@ class EnrollResult {
 }
 
 /// One day in the attendance history (`GET /api/attendance/history`).
-/// [date] is `yyyy-MM-dd`; [checkIn] / [checkOut] are ISO-8601 instants for the
-/// earliest (vào ca) and latest (ra ca) punch of that day, or null if absent.
+/// [date] is `yyyy-MM-dd`; [punches] is every check-in/check-out of that day in
+/// chronological order (earliest first).
 class DailyHistory {
-  DailyHistory({required this.date, this.checkIn, this.checkOut});
+  DailyHistory({required this.date, required this.punches});
 
   final String date;
-  final String? checkIn;
-  final String? checkOut;
+  final List<DailyPunch> punches;
 
   factory DailyHistory.fromJson(Map<String, dynamic> json) => DailyHistory(
         date: json['date'] as String,
-        checkIn: json['checkIn'] as String?,
-        checkOut: json['checkOut'] as String?,
+        punches: ((json['punches'] as List<dynamic>?) ?? const [])
+            .map((e) => DailyPunch.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+/// A single punch within a day: its [id], [type] (`CHECK_IN` / `CHECK_OUT`), the
+/// ISO-8601 [eventTime] it happened, and an optional write-once shift-handover
+/// [note] (only ever present on a check-in).
+class DailyPunch {
+  DailyPunch({
+    required this.id,
+    required this.type,
+    required this.eventTime,
+    this.note,
+  });
+
+  final int id;
+  final String type;
+  final String eventTime;
+
+  /// Mutable so a just-saved note can be reflected in place without waiting for
+  /// a full history reload. The value always matches what the server persisted.
+  String? note;
+
+  bool get isCheckIn => type == AttendanceType.checkIn.wireName;
+  bool get hasNote => note != null && note!.trim().isNotEmpty;
+
+  factory DailyPunch.fromJson(Map<String, dynamic> json) => DailyPunch(
+        id: json['id'] as int,
+        type: json['type'] as String,
+        eventTime: json['eventTime'] as String,
+        note: json['note'] as String?,
+      );
+}
+
+/// Result of `GET /api/attendance/status`: the officer's current state today.
+/// [openSession] is true when the last punch today is a check-in, so the only
+/// valid next action is a check-out (and vice-versa).
+class AttendanceStatus {
+  AttendanceStatus({
+    required this.openSession,
+    this.lastType,
+    this.lastEventTime,
+  });
+
+  final bool openSession;
+  final String? lastType;
+  final String? lastEventTime;
+
+  bool get canCheckIn => !openSession;
+  bool get canCheckOut => openSession;
+
+  factory AttendanceStatus.fromJson(Map<String, dynamic> json) =>
+      AttendanceStatus(
+        openSession: json['openSession'] as bool? ?? false,
+        lastType: json['lastType'] as String?,
+        lastEventTime: json['lastEventTime'] as String?,
       );
 }
 

@@ -16,8 +16,11 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
+  final GlobalKey<HistoryViewState> _historyKey = GlobalKey<HistoryViewState>();
 
   static const _titles = ['Chấm công', 'Lịch sử chấm công'];
+
+  static const _historyIndex = 1;
 
   Future<void> _confirmUnenroll() async {
     final ok = await showDialog<bool>(
@@ -66,11 +69,16 @@ class _HomeShellState extends State<HomeShell> {
       ),
       body: IndexedStack(
         index: _index,
-        children: const [AttendanceView(), HistoryView()],
+        children: [const AttendanceView(), HistoryView(key: _historyKey)],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
+        onDestinationSelected: (i) {
+          setState(() => _index = i);
+          // Re-fetch history each time the tab is opened so a just-recorded
+          // check-in/check-out is always shown.
+          if (i == _historyIndex) _historyKey.currentState?.reload();
+        },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.fingerprint_rounded),

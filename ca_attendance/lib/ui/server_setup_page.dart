@@ -18,7 +18,7 @@ class _ServerSetupPageState extends State<ServerSetupPage> {
   @override
   void initState() {
     super.initState();
-    _controller.text = context.read<AppState>().baseUrl ?? 'http://192.168.1.10:8080';
+    _controller.text = _extractIp(context.read<AppState>().baseUrl) ?? '192.168.1.10';
   }
 
   @override
@@ -27,9 +27,18 @@ class _ServerSetupPageState extends State<ServerSetupPage> {
     super.dispose();
   }
 
+  /// Pulls just the IP/host out of a stored URL like `http://192.168.1.10:8080`.
+  String? _extractIp(String? url) {
+    if (url == null || url.isEmpty) return null;
+    var host = url.trim().replaceFirst(RegExp(r'^https?://'), '');
+    host = host.split('/').first.split(':').first;
+    return host.isEmpty ? null : host;
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    await context.read<AppState>().saveBaseUrl(_controller.text);
+    final ip = _controller.text.trim();
+    await context.read<AppState>().saveBaseUrl('http://$ip:8080');
   }
 
   @override
@@ -46,26 +55,29 @@ class _ServerSetupPageState extends State<ServerSetupPage> {
               const Icon(Icons.lan_outlined, size: 72, color: Colors.indigo),
               const SizedBox(height: 16),
               Text(
-                'Nhập địa chỉ máy chủ chấm công trong mạng LAN.',
+                'Nhập địa chỉ IP của máy chủ chấm công trong mạng LAN.',
                 style: Theme.of(context).textTheme.bodyLarge,
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
               TextFormField(
                 controller: _controller,
-                keyboardType: TextInputType.url,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 autocorrect: false,
                 decoration: const InputDecoration(
-                  labelText: 'Địa chỉ máy chủ',
-                  hintText: 'http://192.168.1.10:8080',
+                  labelText: 'Địa chỉ IP máy chủ',
+                  hintText: '192.168.1.10',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.dns_outlined),
+                  prefixText: 'http://',
+                  suffixText: ':8080',
                 ),
                 validator: (v) {
                   final t = (v ?? '').trim();
-                  if (t.isEmpty) return 'Vui lòng nhập địa chỉ máy chủ';
-                  final host = t.replaceFirst(RegExp(r'^https?://'), '');
-                  if (host.isEmpty) return 'Địa chỉ không hợp lệ';
+                  if (t.isEmpty) return 'Vui lòng nhập địa chỉ IP';
+                  if (t.contains('://') || t.contains('/')) {
+                    return 'Chỉ nhập IP, ví dụ 192.168.1.10';
+                  }
                   return null;
                 },
               ),

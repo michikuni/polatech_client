@@ -7,8 +7,22 @@ import 'theme.dart';
 
 /// The "Chấm công" tab: officer identity + check-in / check-out actions.
 /// Body only — the [Scaffold]/[AppBar]/nav live in the parent shell.
-class AttendanceView extends StatelessWidget {
+class AttendanceView extends StatefulWidget {
   const AttendanceView({super.key});
+
+  @override
+  State<AttendanceView> createState() => _AttendanceViewState();
+}
+
+class _AttendanceViewState extends State<AttendanceView> {
+  @override
+  void initState() {
+    super.initState();
+    // Load today's state so only the valid button is enabled on first paint.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<AppState>().refreshStatus();
+    });
+  }
 
   Future<void> _record(BuildContext context, AttendanceType type) async {
     final state = context.read<AppState>();
@@ -58,11 +72,15 @@ class AttendanceView extends StatelessWidget {
                 ),
               ),
             ),
+            if (state.status != null) ...[
+              _StateHint(openSession: state.status!.openSession),
+              const SizedBox(height: 14),
+            ],
             _PunchButton(
               label: 'Vào ca',
               icon: Icons.login_rounded,
               color: AppColors.checkIn,
-              enabled: !state.busy,
+              enabled: !state.busy && state.canCheckIn,
               onPressed: () => _record(context, AttendanceType.checkIn),
             ),
             const SizedBox(height: 14),
@@ -71,7 +89,7 @@ class AttendanceView extends StatelessWidget {
               icon: Icons.logout_rounded,
               color: AppColors.checkOut,
               outlined: true,
-              enabled: !state.busy,
+              enabled: !state.busy && state.canCheckOut,
               onPressed: () => _record(context, AttendanceType.checkOut),
             ),
             const SizedBox(height: 24),
@@ -90,6 +108,47 @@ class AttendanceView extends StatelessWidget {
               _LastPunchBanner(event: state.lastEvent!),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A one-line hint telling the officer which action is expected next, matching
+/// the enabled button.
+class _StateHint extends StatelessWidget {
+  const _StateHint({required this.openSession});
+
+  final bool openSession;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = openSession ? AppColors.checkOut : AppColors.checkIn;
+    final text = openSession
+        ? 'Đang trong ca trực.'
+        : 'Đã tan ca.';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.22)),
+      ),
+      child: Row(
+        children: [
+          Icon(openSession ? Icons.timelapse_rounded : Icons.check_circle_outline,
+              size: 18, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

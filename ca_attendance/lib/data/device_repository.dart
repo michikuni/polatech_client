@@ -153,6 +153,34 @@ class DeviceRepository {
     }
   }
 
+  /// The officer's current check-in/check-out state for today.
+  Future<AttendanceStatus> fetchStatus() async {
+    final deviceId = _store.deviceId;
+    if (deviceId == null) {
+      throw ApiException('Thiết bị chưa được ghép cặp.');
+    }
+    final api = _api();
+    try {
+      return await api.fetchStatus(deviceId);
+    } finally {
+      api.close();
+    }
+  }
+
+  /// Saves the one-time shift-handover note on check-in [eventId].
+  Future<String> saveNote(int eventId, String note) async {
+    final deviceId = _store.deviceId;
+    if (deviceId == null) {
+      throw ApiException('Thiết bị chưa được ghép cặp.');
+    }
+    final api = _api();
+    try {
+      return await api.saveNote(deviceId: deviceId, eventId: eventId, note: note);
+    } finally {
+      api.close();
+    }
+  }
+
   Future<void> unenroll() async {
     await _guard(() => _keystore.deleteKey());
     await _store.clearEnrollment();
