@@ -18,8 +18,16 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // No base URL yet => the first screen asks for the server address.
+    // No base URL yet => the first screen asks how to reach the server. The scan
+    // leads (the QR carries the address); the IP form stays hidden until asked
+    // for.
     expect(find.text('Kết nối máy chủ'), findsOneWidget);
+    expect(find.text('Quét mã QR'), findsOneWidget);
+    expect(find.byType(TextFormField), findsNothing);
+
+    await tester.tap(find.text('Không quét được? Nhập địa chỉ thủ công'));
+    await tester.pumpAndSettle();
+
     expect(find.byType(TextFormField), findsOneWidget);
   });
 }

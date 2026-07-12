@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../data/device_repository.dart';
 import '../data/local_store.dart';
 import '../data/models.dart';
+import '../data/pairing_qr.dart';
 
 /// Which top-level screen the app should show.
 enum AppScreen { serverSetup, enroll, attendance }
@@ -20,6 +21,11 @@ class AppState extends ChangeNotifier {
 
   bool busy = false;
   AttendanceEvent? lastEvent;
+
+  /// Pairing code captured from a QR scan that happened before the enroll screen
+  /// existed (i.e. on the server-setup screen). [takePendingPairingCode] hands it
+  /// to the enroll screen exactly once, so a later re-scan is not overridden.
+  String? _pendingPairingCode;
 
   /// Today's attendance state, or null until loaded / on load failure. Drives
   /// which of the two punch buttons is enabled.
@@ -53,6 +59,42 @@ class AppState extends ChangeNotifier {
   Future<void> saveBaseUrl(String url) async {
     await _store.setBaseUrl(_normalize(url));
     notifyListeners();
+  }
+
+  /// Applies a scanned QR: adopts the server address it carries (so the employee
+  /// never types an IP) and, if it also carried a pairing code, remembers it for
+  /// the enroll screen. A connect-only QR therefore just re-points an already
+  /// paired device at the server's new address — the hardware key is untouched.
+  ///
+  /// Returns null on success, or a message when the QR carries neither a usable
+  /// address nor anything to do with the current state.
+  Future<String?> applyPairingQr(PairingQr qr) async {
+    if (qr.baseUrl != null) {
+      await _store.setBaseUrl(_normalize(qr.baseUrl!));
+    } else if (baseUrl == null || baseUrl!.isEmpty) {
+      return 'Mã QR này không chứa địa chỉ máy chủ. Hãy nhập địa chỉ thủ công, '
+          'hoặc xin quản trị viên cấp lại mã QR mới.';
+    }
+    if (qr.code == null && !isEnrolled) {
+      // Connect-only QR on a device that still has to pair: the address is saved,
+      // but the employee also needs a pairing code.
+      notifyListeners();
+      return 'Đã lưu địa chỉ máy chủ. Thiết bị chưa ghép cặp — hãy quét QR mã '
+          'ghép cặp do quản trị viên cấp.';
+    }
+    if (qr.code != null) _pendingPairingCode = qr.code;
+    notifyListeners();
+    return null;
+  }
+
+  /// True once this device holds a key paired with the server.
+  bool get isEnrolled => _repo.isEnrolled;
+
+  /// Returns the code from a pre-enroll scan (once), clearing it.
+  String? takePendingPairingCode() {
+    final code = _pendingPairingCode;
+    _pendingPairingCode = null;
+    return code;
   }
 
   /// Returns null on success, or a user-facing error message.
@@ -119,6 +161,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> changeServer() async {
     await _store.setBaseUrl('');
+    _pendingPairingCode = null;
     notifyListeners();
   }
 

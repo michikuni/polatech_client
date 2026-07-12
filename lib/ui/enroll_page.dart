@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 
+import '../data/pairing_qr.dart';
 import '../state/app_state.dart';
+import 'qr_scan_view.dart';
 
-/// Pairing flow. The employee first scans the QR the admin generated in the
-/// portal (it carries the one-time pairing code). On a successful scan the code
-/// is filled in and locked, and they only add an optional device name. They can
-/// also skip scanning and type the code by hand.
+/// Pairing flow. The employee scans the QR the admin generated in the portal (it
+/// carries the one-time pairing code and the server address). On a successful
+/// scan the code is filled in and locked, and they only add an optional device
+/// name. They can also skip scanning and type the code by hand.
+///
+/// When the scan already happened on the server-setup screen, its code arrives
+/// through [AppState.takePendingPairingCode] and this page opens straight on the
+/// form.
 ///
 /// The device then generates its key pair and proves possession by signing the
 /// code (see [DeviceRepository.enroll]).
@@ -22,15 +27,49 @@ class EnrollPage extends StatefulWidget {
 enum _Step { scan, form }
 
 class _EnrollPageState extends State<EnrollPage> {
-  _Step _step = _Step.scan;
+  late _Step _step;
 
   /// Non-null once the code came from a QR scan; in that case the code field is
   /// pre-filled and locked. Null means the employee chose to type it manually.
   String? _scannedCode;
 
-  void _onScanned(String code) {
+  /// Bumped to rebuild [QrScanView] with a fresh state: the scanner stops after
+  /// its first hit, so re-scanning (e.g. after a connect-only QR) needs a new one.
+  int _scanNonce = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _scannedCode = context.read<AppState>().takePendingPairingCode();
+    _step = _scannedCode == null ? _Step.scan : _Step.form;
+  }
+
+  /// A QR scanned here also carries the server address (the admin may have
+  /// re-issued the code from a server that moved); adopt it so the enroll call
+  /// goes to the server that actually issued the code.
+  ///
+  /// A connect-only QR (address, no code) is not enough to pair: the address is
+  /// kept and the employee stays on the scanner to read the real pairing QR.
+  Future<void> _onScanned(PairingQr payload) async {
+    final error = await context.read<AppState>().applyPairingQr(payload);
+    if (!mounted) return;
+    if (payload.code == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error ??
+              'QR này chỉ chứa địa chỉ máy chủ. Hãy quét QR mã ghép cặp do '
+                  'quản trị viên cấp.'),
+          backgroundColor: Colors.orange.shade800,
+        ),
+      );
+      setState(() {
+        _step = _Step.scan;
+        _scanNonce++; // fresh scanner state, otherwise it stays latched shut
+      });
+      return;
+    }
     setState(() {
-      _scannedCode = code;
+      _scannedCode = payload.code;
       _step = _Step.form;
     });
   }
@@ -46,165 +85,35 @@ class _EnrollPageState extends State<EnrollPage> {
     setState(() {
       _scannedCode = null;
       _step = _Step.scan;
+      _scanNonce++;
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
     switch (_step) {
       case _Step.scan:
-        return _ScanStep(onScanned: _onScanned, onSkip: _enterManually);
+        return QrScanView(
+          key: ValueKey(_scanNonce),
+          title: 'Quét QR ghép cặp',
+          hint: 'Hướng camera vào mã QR do quản trị viên cấp.',
+          skipLabel: 'Bỏ qua, nhập mã thủ công',
+          onScanned: _onScanned,
+          onSkip: _enterManually,
+          actions: [
+            IconButton(
+              tooltip: 'Đổi máy chủ',
+              icon: const Icon(Icons.settings_outlined),
+              onPressed: state.busy
+                  ? null
+                  : () => context.read<AppState>().changeServer(),
+            ),
+          ],
+        );
       case _Step.form:
         return _FormStep(lockedCode: _scannedCode, onRescan: _backToScan);
     }
-  }
-}
-
-/// Camera screen that reads the admin QR (which encodes the raw pairing code).
-class _ScanStep extends StatefulWidget {
-  const _ScanStep({required this.onScanned, required this.onSkip});
-
-  final void Function(String code) onScanned;
-  final VoidCallback onSkip;
-
-  @override
-  State<_ScanStep> createState() => _ScanStepState();
-}
-
-class _ScanStepState extends State<_ScanStep> {
-  final MobileScannerController _controller = MobileScannerController(
-    formats: const [BarcodeFormat.qrCode],
-  );
-
-  /// Guards against the detection stream firing repeatedly for the same code.
-  bool _handled = false;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _onDetect(BarcodeCapture capture) {
-    if (_handled) return;
-    for (final barcode in capture.barcodes) {
-      final raw = barcode.rawValue;
-      if (raw != null && raw.trim().isNotEmpty) {
-        _handled = true;
-        // The admin QR carries the raw pairing code; normalise to the server
-        // alphabet (trimmed, upper-case) just like typed input.
-        widget.onScanned(raw.trim().toUpperCase());
-        return;
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Quét QR ghép cặp'),
-        actions: [
-          IconButton(
-            tooltip: 'Đổi máy chủ',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed:
-                state.busy ? null : () => context.read<AppState>().changeServer(),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                MobileScanner(
-                  controller: _controller,
-                  onDetect: _onDetect,
-                  errorBuilder: (context, error) => _ScannerError(
-                    message: error.errorCode.message,
-                  ),
-                ),
-                // Simple viewfinder frame.
-                IgnorePointer(
-                  child: Center(
-                    child: Container(
-                      width: 240,
-                      height: 240,
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.white, width: 3),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Hướng camera vào mã QR do quản trị viên cấp.',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                OutlinedButton.icon(
-                  onPressed: widget.onSkip,
-                  icon: const Icon(Icons.keyboard_outlined),
-                  label: const Text('Bỏ qua, nhập mã thủ công'),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(height: 40)
-        ],
-      ),
-    );
-  }
-}
-
-/// Shown when the camera can't be opened (no permission, no camera, etc.); the
-/// employee can still fall back to manual entry via the button below the frame.
-class _ScannerError extends StatelessWidget {
-  const _ScannerError({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: Colors.black,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.no_photography_outlined,
-                  color: Colors.white70, size: 48),
-              const SizedBox(height: 12),
-              Text(
-                'Không mở được camera.\n$message',
-                style: const TextStyle(color: Colors.white70),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Bạn vẫn có thể bỏ qua và nhập mã thủ công.',
-                style: TextStyle(color: Colors.white54, fontSize: 12),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 
